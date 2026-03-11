@@ -1,0 +1,7 @@
+node_modules/
+.env
+qualium.db
+qualium.db-shm
+qualium.db-wal
+logo-b64.txt
+*.bak
