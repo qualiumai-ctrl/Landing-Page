@@ -3,7 +3,7 @@
    Node.js + Express + SQLite + Nodemailer
    ============================================ */
 
-require('dotenv').config();
+require('dotenv').config({ quiet: true });
 
 const express = require('express');
 const path = require('path');
@@ -13,8 +13,13 @@ const rateLimit = require('express-rate-limit');
 let Database;
 try { Database = require('better-sqlite3'); } catch (e) { Database = null; }
 
+let pgSql;
+try { pgSql = require('@vercel/postgres').sql; } catch (e) { pgSql = null; }
+
 const app = express();
 const PORT = process.env.PORT || 3000;
+const IS_VERCEL = !!process.env.VERCEL;
+const HAS_POSTGRES = !!(pgSql && process.env.POSTGRES_URL);
 
 // Trust the first proxy (Vercel, etc.) so express-rate-limit reads X-Forwarded-For correctly
 app.set('trust proxy', 1);
@@ -37,9 +42,50 @@ const apiLimiter = rateLimit({
 
 app.use('/api/', apiLimiter);
 
-// --- Database Setup (skipped on Vercel / when better-sqlite3 unavailable) ---
+// --- Database Setup ---
+// Priority:
+// 1) Vercel Postgres (production/serverless)
+// 2) SQLite (local)
 let db = null;
-if (Database) {
+let postgresSchemaReady = null;
+
+async function ensurePostgresSchema() {
+    if (!HAS_POSTGRES) return;
+    if (!postgresSchemaReady) {
+        postgresSchemaReady = (async () => {
+            await pgSql`
+                CREATE TABLE IF NOT EXISTS registrations (
+                    id SERIAL PRIMARY KEY,
+                    first_name TEXT NOT NULL,
+                    last_name TEXT NOT NULL,
+                    email TEXT NOT NULL UNIQUE,
+                    phone TEXT DEFAULT '',
+                    company TEXT DEFAULT '',
+                    role TEXT DEFAULT '',
+                    use_case TEXT DEFAULT '',
+                    registered_at TIMESTAMPTZ DEFAULT NOW(),
+                    email_confirmed INTEGER DEFAULT 0
+                )
+            `;
+
+            await pgSql`
+                CREATE TABLE IF NOT EXISTS contact_messages (
+                    id SERIAL PRIMARY KEY,
+                    name TEXT NOT NULL,
+                    email TEXT NOT NULL,
+                    company TEXT DEFAULT '',
+                    message TEXT NOT NULL,
+                    sent_at TIMESTAMPTZ DEFAULT NOW()
+                )
+            `;
+        })();
+    }
+    await postgresSchemaReady;
+}
+
+if (HAS_POSTGRES) {
+    console.log('Using Vercel Postgres for persistent storage.');
+} else if (Database && !IS_VERCEL) {
     try {
         db = new Database(path.join(__dirname, 'qualium.db'));
         db.pragma('journal_mode = WAL');
@@ -70,6 +116,8 @@ if (Database) {
         console.warn('SQLite unavailable:', e.message);
         db = null;
     }
+} else if (IS_VERCEL) {
+    console.log('No persistent DB configured on Vercel. Add POSTGRES_URL to enable storage.');
 }
 
 // --- Email Configuration ---
@@ -396,7 +444,7 @@ function escapeHtml(str) {
 // --- API Routes ---
 
 // POST /api/register
-app.post('/api/register', (req, res) => {
+app.post('/api/register', async (req, res) => {
     try {
         const { firstName, lastName, email, phone, company, role, useCase } = req.body;
 
@@ -409,8 +457,29 @@ app.post('/api/register', (req, res) => {
             return res.status(400).json({ success: false, message: 'Invalid email address.' });
         }
 
-        // Insert into database (if available)
-        if (db) {
+        // Insert into database (Postgres on Vercel, SQLite locally)
+        if (HAS_POSTGRES) {
+            await ensurePostgresSchema();
+            try {
+                await pgSql`
+                    INSERT INTO registrations (first_name, last_name, email, phone, company, role, use_case)
+                    VALUES (
+                        ${firstName.trim()},
+                        ${lastName.trim()},
+                        ${email.trim().toLowerCase()},
+                        ${(phone || '').trim()},
+                        ${(company || '').trim()},
+                        ${(role || '').trim()},
+                        ${(useCase || '').trim()}
+                    )
+                `;
+            } catch (dbErr) {
+                if (dbErr.code === '23505') {
+                    return res.status(409).json({ success: false, message: 'This email is already registered.' });
+                }
+                throw dbErr;
+            }
+        } else if (db) {
             const stmt = db.prepare(`
                 INSERT INTO registrations (first_name, last_name, email, phone, company, role, use_case)
                 VALUES (?, ?, ?, ?, ?, ?, ?)
@@ -434,22 +503,28 @@ app.post('/api/register', (req, res) => {
             }
         }
 
-        // Send confirmation email (async, don't block response)
+        // Send confirmation email immediately before returning success
         if (transporter) {
             const safeFirstName = escapeHtml(firstName.trim());
-            transporter.sendMail({
-                from: SMTP_FROM,
-                to: email.trim().toLowerCase(),
-                subject: 'Welcome to Qaulium AI — Registration Confirmed',
-                html: buildConfirmationEmail(safeFirstName),
-                attachments: [{
-                    filename: 'logo-white.png',
-                    path: LOGO_PATH,
-                    cid: 'qualium-logo'
-                }]
-            }).catch(err => {
-                console.error('Failed to send confirmation email:', err.message);
-            });
+            try {
+                await transporter.sendMail({
+                    from: SMTP_FROM,
+                    to: email.trim().toLowerCase(),
+                    subject: 'Welcome to Qaulium AI — Registration Confirmed',
+                    html: buildConfirmationEmail(safeFirstName),
+                    attachments: [{
+                        filename: 'logo-white.png',
+                        path: LOGO_PATH,
+                        cid: 'qualium-logo'
+                    }]
+                });
+            } catch (emailErr) {
+                console.error('Failed to send confirmation email:', emailErr.message);
+                return res.status(502).json({
+                    success: false,
+                    message: 'Registration saved, but confirmation email could not be sent right now. Please try again.'
+                });
+            }
         }
 
         res.json({ success: true, message: 'Registration successful.' });
@@ -461,7 +536,7 @@ app.post('/api/register', (req, res) => {
 });
 
 // POST /api/contact
-app.post('/api/contact', (req, res) => {
+app.post('/api/contact', async (req, res) => {
     try {
         const { name, email, company, message } = req.body;
 
@@ -474,8 +549,19 @@ app.post('/api/contact', (req, res) => {
             return res.status(400).json({ success: false, message: 'Invalid email address.' });
         }
 
-        // Save to database (if available)
-        if (db) {
+        // Save to database (Postgres on Vercel, SQLite locally)
+        if (HAS_POSTGRES) {
+            await ensurePostgresSchema();
+            await pgSql`
+                INSERT INTO contact_messages (name, email, company, message)
+                VALUES (
+                    ${name.trim()},
+                    ${email.trim().toLowerCase()},
+                    ${(company || '').trim()},
+                    ${message.trim()}
+                )
+            `;
+        } else if (db) {
             const stmt = db.prepare(`
                 INSERT INTO contact_messages (name, email, company, message)
                 VALUES (?, ?, ?, ?)
@@ -483,36 +569,40 @@ app.post('/api/contact', (req, res) => {
             stmt.run(name.trim(), email.trim().toLowerCase(), (company || '').trim(), message.trim());
         }
 
-        // Send notification email to team
+        // Send both emails immediately before returning success
         if (transporter) {
             const safeName = escapeHtml(name.trim());
             const safeEmail = escapeHtml(email.trim());
             const safeCompany = escapeHtml((company || '').trim());
             const safeMessage = escapeHtml(message.trim());
 
-            transporter.sendMail({
-                from: SMTP_FROM,
-                to: process.env.CONTACT_EMAIL || 'admin@qauliumai.in',
-                subject: `Contact Form: ${safeName} — Qaulium AI`,
-                html: buildContactNotificationEmail(safeName, safeEmail, safeCompany, safeMessage)
-            }).catch(err => {
-                console.error('Failed to send contact notification:', err.message);
-            });
-
-            // Send confirmation email to the person who submitted
-            transporter.sendMail({
-                from: SMTP_FROM,
-                to: email.trim().toLowerCase(),
-                subject: 'We received your message — Qaulium AI',
-                html: buildContactConfirmationEmail(safeName),
-                attachments: [{
-                    filename: 'logo-white.png',
-                    path: LOGO_PATH,
-                    cid: 'qualium-logo'
-                }]
-            }).catch(err => {
-                console.error('Failed to send contact confirmation:', err.message);
-            });
+            try {
+                await Promise.all([
+                    transporter.sendMail({
+                        from: SMTP_FROM,
+                        to: process.env.CONTACT_EMAIL || 'admin@qauliumai.in',
+                        subject: `Contact Form: ${safeName} — Qaulium AI`,
+                        html: buildContactNotificationEmail(safeName, safeEmail, safeCompany, safeMessage)
+                    }),
+                    transporter.sendMail({
+                        from: SMTP_FROM,
+                        to: email.trim().toLowerCase(),
+                        subject: 'We received your message — Qaulium AI',
+                        html: buildContactConfirmationEmail(safeName),
+                        attachments: [{
+                            filename: 'logo-white.png',
+                            path: LOGO_PATH,
+                            cid: 'qualium-logo'
+                        }]
+                    })
+                ]);
+            } catch (emailErr) {
+                console.error('Failed to send contact emails:', emailErr.message);
+                return res.status(502).json({
+                    success: false,
+                    message: 'Message saved, but email delivery failed right now. Please try again.'
+                });
+            }
         }
 
         res.json({ success: true, message: 'Message sent successfully.' });
@@ -523,11 +613,88 @@ app.post('/api/contact', (req, res) => {
     }
 });
 
-// GET /api/registrations — Admin endpoint to view all registrations
-app.get('/api/registrations', (req, res) => {
-    if (!db) return res.json({ success: true, count: 0, data: [], note: 'Database not available in serverless mode.' });
+// GET /api/stats — Admin endpoint for total request counts and recent submissions
+app.get('/api/stats', async (req, res) => {
+    if (!HAS_POSTGRES && !db) {
+        return res.json({
+            success: true,
+            totals: { registrations: 0, contacts: 0, allRequests: 0 },
+            recent: { registrations: [], contacts: [] },
+            note: 'No persistent DB configured.'
+        });
+    }
+
     try {
-        const rows = db.prepare('SELECT * FROM registrations ORDER BY registered_at DESC').all();
+        let registrationsCount = 0;
+        let contactsCount = 0;
+        let recentRegistrations = [];
+        let recentContacts = [];
+
+        if (HAS_POSTGRES) {
+            await ensurePostgresSchema();
+
+            const regCountResult = await pgSql`SELECT COUNT(*)::int AS count FROM registrations`;
+            const contactCountResult = await pgSql`SELECT COUNT(*)::int AS count FROM contact_messages`;
+            registrationsCount = regCountResult.rows[0]?.count || 0;
+            contactsCount = contactCountResult.rows[0]?.count || 0;
+
+            const regResult = await pgSql`
+                SELECT id, first_name, last_name, email, phone, company, role, use_case, registered_at
+                FROM registrations
+                ORDER BY registered_at DESC
+                LIMIT 10
+            `;
+            const contactResult = await pgSql`
+                SELECT id, name, email, company, message, sent_at
+                FROM contact_messages
+                ORDER BY sent_at DESC
+                LIMIT 10
+            `;
+            recentRegistrations = regResult.rows;
+            recentContacts = contactResult.rows;
+        } else {
+            registrationsCount = db.prepare('SELECT COUNT(*) AS count FROM registrations').get().count;
+            contactsCount = db.prepare('SELECT COUNT(*) AS count FROM contact_messages').get().count;
+
+            recentRegistrations = db.prepare(
+                'SELECT id, first_name, last_name, email, phone, company, role, use_case, registered_at FROM registrations ORDER BY registered_at DESC LIMIT 10'
+            ).all();
+
+            recentContacts = db.prepare(
+                'SELECT id, name, email, company, message, sent_at FROM contact_messages ORDER BY sent_at DESC LIMIT 10'
+            ).all();
+        }
+
+        return res.json({
+            success: true,
+            totals: {
+                registrations: registrationsCount,
+                contacts: contactsCount,
+                allRequests: registrationsCount + contactsCount
+            },
+            recent: {
+                registrations: recentRegistrations,
+                contacts: recentContacts
+            }
+        });
+    } catch (err) {
+        console.error('Error fetching stats:', err.message);
+        return res.status(500).json({ success: false, message: 'Internal server error.' });
+    }
+});
+
+// GET /api/registrations — Admin endpoint to view all registrations
+app.get('/api/registrations', async (req, res) => {
+    if (!HAS_POSTGRES && !db) return res.json({ success: true, count: 0, data: [], note: 'No persistent DB configured.' });
+    try {
+        let rows;
+        if (HAS_POSTGRES) {
+            await ensurePostgresSchema();
+            const result = await pgSql`SELECT * FROM registrations ORDER BY registered_at DESC`;
+            rows = result.rows;
+        } else {
+            rows = db.prepare('SELECT * FROM registrations ORDER BY registered_at DESC').all();
+        }
         res.json({ success: true, count: rows.length, data: rows });
     } catch (err) {
         console.error('Error fetching registrations:', err.message);
@@ -536,10 +703,17 @@ app.get('/api/registrations', (req, res) => {
 });
 
 // GET /api/contacts — Admin endpoint to view all contact messages
-app.get('/api/contacts', (req, res) => {
-    if (!db) return res.json({ success: true, count: 0, data: [], note: 'Database not available in serverless mode.' });
+app.get('/api/contacts', async (req, res) => {
+    if (!HAS_POSTGRES && !db) return res.json({ success: true, count: 0, data: [], note: 'No persistent DB configured.' });
     try {
-        const rows = db.prepare('SELECT * FROM contact_messages ORDER BY sent_at DESC').all();
+        let rows;
+        if (HAS_POSTGRES) {
+            await ensurePostgresSchema();
+            const result = await pgSql`SELECT * FROM contact_messages ORDER BY sent_at DESC`;
+            rows = result.rows;
+        } else {
+            rows = db.prepare('SELECT * FROM contact_messages ORDER BY sent_at DESC').all();
+        }
         res.json({ success: true, count: rows.length, data: rows });
     } catch (err) {
         console.error('Error fetching contacts:', err.message);

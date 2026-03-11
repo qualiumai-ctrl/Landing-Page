@@ -8,6 +8,7 @@
     "dev": "node server.js"
   },
   "dependencies": {
+    "@vercel/postgres": "^0.10.0",
     "dotenv": "^17.3.1",
     "express": "^4.21.0",
     "express-rate-limit": "^7.4.0",
