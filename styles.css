@@ -566,7 +566,7 @@ img { max-width: 100%; display: block; }
 
 .arch-block {
     background: var(--color-bg);
-    border: 1px solid var(--color-border-light);
+    border: 1px solid rgba(0, 0, 0, 0.05);
     border-radius: 12px;
     padding: 34px 30px;
     transition: background 0.2s var(--ease-out);
