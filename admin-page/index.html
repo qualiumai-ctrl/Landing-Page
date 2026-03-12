@@ -47,6 +47,7 @@
         <button class="menu-item" data-tab="registrations">Registrations</button>
         <button class="menu-item" data-tab="contacts">Contacts</button>
         <button class="menu-item" data-tab="careers">Careers</button>
+        <button class="menu-item" data-tab="forms">Forms</button>
         <button class="menu-item" data-tab="composer">Email Composer</button>
       </nav>
       <div class="sidebar-actions">
@@ -69,6 +70,7 @@
           <div class="stat-card"><h3>Registrations</h3><p id="statRegistrations">0</p></div>
           <div class="stat-card"><h3>Contacts</h3><p id="statContacts">0</p></div>
           <div class="stat-card"><h3>Careers</h3><p id="statCareers">0</p></div>
+          <div class="stat-card"><h3>Forms</h3><p id="statForms">0</p></div>
           <div class="stat-card"><h3>Total Requests</h3><p id="statAll">0</p></div>
         </div>
         <div class="overview-note">
@@ -320,6 +322,79 @@
             </div>
           </div>
         </form>
+      </section>
+
+      <section class="tab-panel hidden" id="panel-forms">
+        <div class="panel-toolbar">
+          <input type="text" id="formsSearch" placeholder="Search forms...">
+          <button class="btn btn-primary" id="createFormBtn">+ Create Form</button>
+        </div>
+        <div id="formsList" class="forms-grid"></div>
+      </section>
+
+      <section class="tab-panel hidden" id="panel-form-builder">
+        <div class="panel-toolbar">
+          <button class="btn btn-secondary" id="backToFormsBtn">&larr; Back to Forms</button>
+          <div style="flex:1"></div>
+          <span id="formBuilderStatus" class="muted" style="margin-right:12px"></span>
+          <button class="btn btn-primary" id="saveFormBtn">Save Form</button>
+        </div>
+        <div class="fb-layout">
+          <div class="fb-main">
+            <div class="fb-header-card">
+              <input type="text" id="fbTitle" class="fb-title-input" placeholder="Untitled Form" required>
+              <input type="text" id="fbDescription" class="fb-desc-input" placeholder="Form description (optional)">
+            </div>
+            <div id="fbSections" class="fb-sections"></div>
+            <button type="button" class="btn btn-secondary fb-add-section" id="fbAddSection">+ Add Section</button>
+          </div>
+          <div class="fb-sidebar">
+            <div class="fb-sidebar-card">
+              <h4>Form Link</h4>
+              <div id="fbLinkWrap" class="fb-link-wrap">
+                <span class="muted">Save form to generate link</span>
+              </div>
+            </div>
+            <div class="fb-sidebar-card">
+              <h4>Status</h4>
+              <label class="fb-toggle-label">
+                <input type="checkbox" id="fbActive" checked> Accepting responses
+              </label>
+            </div>
+            <div class="fb-sidebar-card">
+              <h4>Add Field</h4>
+              <p class="muted" style="font-size:13px;margin-bottom:10px">Click a field type to add it to the last section</p>
+              <div class="fb-field-types">
+                <button type="button" class="fb-field-btn" data-type="text">Aa Text</button>
+                <button type="button" class="fb-field-btn" data-type="paragraph">¶ Paragraph</button>
+                <button type="button" class="fb-field-btn" data-type="email">@ Email</button>
+                <button type="button" class="fb-field-btn" data-type="number"># Number</button>
+                <button type="button" class="fb-field-btn" data-type="date">📅 Date</button>
+                <button type="button" class="fb-field-btn" data-type="phone">📞 Phone</button>
+                <button type="button" class="fb-field-btn" data-type="url">🔗 URL</button>
+                <button type="button" class="fb-field-btn" data-type="dropdown">▼ Dropdown</button>
+                <button type="button" class="fb-field-btn" data-type="multiple_choice">◉ Multiple Choice</button>
+                <button type="button" class="fb-field-btn" data-type="checkbox">☑ Checkbox</button>
+              </div>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <section class="tab-panel hidden" id="panel-form-responses">
+        <div class="panel-toolbar">
+          <button class="btn btn-secondary" id="backToFormsBtn2">&larr; Back to Forms</button>
+          <div style="flex:1"></div>
+          <span id="responseCount" class="muted" style="margin-right:12px"></span>
+          <button class="btn btn-secondary" id="exportResponsesBtn">Export CSV</button>
+        </div>
+        <h2 id="responsesFormTitle" style="margin:0 0 16px"></h2>
+        <div class="table-wrap">
+          <table>
+            <thead id="responsesHead"><tr></tr></thead>
+            <tbody id="responsesBody"></tbody>
+          </table>
+        </div>
       </section>
     </main>
   </div>

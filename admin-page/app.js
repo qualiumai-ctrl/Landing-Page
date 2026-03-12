@@ -292,6 +292,7 @@
     registrations: 'View all platform registrations collected from the landing site.',
     contacts: 'Review contact inquiries and follow up with responses.',
     careers: 'Track internship applications and applicant profiles.',
+    forms: 'Create and manage forms, view responses.',
     composer: 'Compose and send professional bulk emails to selected audiences.'
   };
 
@@ -693,17 +694,20 @@
   }
 
   async function loadDashboard() {
-    const [stats, registrations, contacts, careers] = await Promise.all([
+    const [stats, registrations, contacts, careers, formsData] = await Promise.all([
       request('/api/admin/stats', { headers: authHeaders() }),
       request('/api/admin/registrations', { headers: authHeaders() }),
       request('/api/admin/contacts', { headers: authHeaders() }),
-      request('/api/admin/careers', { headers: authHeaders() })
+      request('/api/admin/careers', { headers: authHeaders() }),
+      request('/api/admin/forms', { headers: authHeaders() }).catch(function() { return { data: [] }; })
     ]);
 
     statRegistrations.textContent = stats.totals.registrations;
     statContacts.textContent = stats.totals.contacts;
     statCareers.textContent = stats.totals.careers;
     statAll.textContent = stats.totals.allRequests;
+    const statFormsEl = document.getElementById('statForms');
+    if (statFormsEl) statFormsEl.textContent = (formsData.data || []).length;
 
     // Update global totals for composer preview
     totals = {
@@ -729,6 +733,7 @@
     state.tables.careers.page = 1;
 
     renderTables();
+    renderFormsList(formsData.data || []);
   }
 
   function switchTab(tab) {
@@ -738,7 +743,8 @@
     document.querySelectorAll('.tab-panel').forEach(function (panel) {
       panel.classList.toggle('hidden', panel.id !== 'panel-' + tab);
     });
-    pageTitle.textContent = tab.charAt(0).toUpperCase() + tab.slice(1);
+    const displayName = tab === 'form-builder' ? 'Form Builder' : tab === 'form-responses' ? 'Form Responses' : tab.charAt(0).toUpperCase() + tab.slice(1);
+    pageTitle.textContent = displayName;
     if (pageSubtitle) {
       pageSubtitle.textContent = subtitleByTab[tab] || subtitleByTab.overview;
     }
@@ -1164,4 +1170,572 @@
   });
 
   bootstrap();
+
+  // ========================================================
+  //   FORMS BUILDER + RESPONSES
+  // ========================================================
+
+  let formsListData = [];
+  let formBuilderState = { id: null, slug: null, sections: [] };
+
+  const formsList = document.getElementById('formsList');
+  const createFormBtn = document.getElementById('createFormBtn');
+  const formsSearch = document.getElementById('formsSearch');
+  const fbTitle = document.getElementById('fbTitle');
+  const fbDescription = document.getElementById('fbDescription');
+  const fbSectionsContainer = document.getElementById('fbSections');
+  const fbAddSectionBtn = document.getElementById('fbAddSection');
+  const saveFormBtn = document.getElementById('saveFormBtn');
+  const fbLinkWrap = document.getElementById('fbLinkWrap');
+  const fbActive = document.getElementById('fbActive');
+  const formBuilderStatus = document.getElementById('formBuilderStatus');
+  const backToFormsBtn = document.getElementById('backToFormsBtn');
+  const backToFormsBtn2 = document.getElementById('backToFormsBtn2');
+  const exportResponsesBtn = document.getElementById('exportResponsesBtn');
+  const responsesFormTitle = document.getElementById('responsesFormTitle');
+  const responsesHead = document.getElementById('responsesHead');
+  const responsesBody = document.getElementById('responsesBody');
+  const responseCount = document.getElementById('responseCount');
+
+  let currentResponseFormId = null;
+
+  function renderFormsList(data) {
+    formsListData = data || [];
+    if (!formsList) return;
+    const search = (formsSearch ? formsSearch.value : '').toLowerCase();
+    const filtered = formsListData.filter(function(f) {
+      return !search || f.title.toLowerCase().includes(search) || (f.description || '').toLowerCase().includes(search);
+    });
+
+    if (!filtered.length) {
+      formsList.innerHTML = '<div class="forms-empty"><h3>No forms yet</h3><p>Create your first form to start collecting responses.</p></div>';
+      return;
+    }
+
+    formsList.innerHTML = filtered.map(function(f) {
+      const isActive = f.is_active;
+      const date = f.created_at ? new Date(f.created_at).toLocaleDateString() : '';
+      return '<div class="form-card" data-id="' + f.id + '">' +
+        '<h3>' + escapeHtml(f.title) + '</h3>' +
+        '<div class="fc-desc">' + escapeHtml(f.description || 'No description') + '</div>' +
+        '<div class="fc-meta">' +
+          '<span class="fc-badge ' + (isActive ? 'active' : 'closed') + '">' + (isActive ? 'Active' : 'Closed') + '</span>' +
+          '<span>' + (f.response_count || 0) + ' response' + ((f.response_count || 0) !== 1 ? 's' : '') + '</span>' +
+          '<span>' + date + '</span>' +
+        '</div>' +
+        '<div class="fc-actions">' +
+          '<button data-action="edit" data-id="' + f.id + '">Edit</button>' +
+          '<button data-action="responses" data-id="' + f.id + '">Responses</button>' +
+          '<button data-action="link" data-slug="' + escapeHtml(f.slug) + '">Copy Link</button>' +
+          '<button data-action="delete" data-id="' + f.id + '" class="danger">Delete</button>' +
+        '</div>' +
+      '</div>';
+    }).join('');
+  }
+
+  if (formsSearch) formsSearch.addEventListener('input', function() { renderFormsList(formsListData); });
+
+  if (formsList) formsList.addEventListener('click', function(e) {
+    const btn = e.target.closest('button[data-action]');
+    if (!btn) return;
+    e.stopPropagation();
+    const action = btn.getAttribute('data-action');
+    const id = btn.getAttribute('data-id');
+    const slug = btn.getAttribute('data-slug');
+
+    if (action === 'edit') openFormBuilder(parseInt(id));
+    else if (action === 'responses') openFormResponses(parseInt(id));
+    else if (action === 'link') {
+      const url = state.apiBase + '/forms/' + slug;
+      navigator.clipboard.writeText(url).then(function() {
+        btn.textContent = 'Copied!';
+        setTimeout(function() { btn.textContent = 'Copy Link'; }, 1500);
+      });
+    }
+    else if (action === 'delete') deleteForm(parseInt(id));
+  });
+
+  if (createFormBtn) createFormBtn.addEventListener('click', function() {
+    openFormBuilder(null);
+  });
+
+  if (backToFormsBtn) backToFormsBtn.addEventListener('click', function() {
+    switchTab('forms');
+    loadFormsOnly();
+  });
+  if (backToFormsBtn2) backToFormsBtn2.addEventListener('click', function() {
+    switchTab('forms');
+    loadFormsOnly();
+  });
+
+  async function loadFormsOnly() {
+    try {
+      const data = await request('/api/admin/forms', { headers: authHeaders() });
+      renderFormsList(data.data || []);
+      const statFormsEl = document.getElementById('statForms');
+      if (statFormsEl) statFormsEl.textContent = (data.data || []).length;
+    } catch (e) { /* ignore */ }
+  }
+
+  function generateFieldId() {
+    return 'f_' + Math.random().toString(36).substr(2, 8);
+  }
+
+  function generateSectionId() {
+    return 's_' + Math.random().toString(36).substr(2, 8);
+  }
+
+  function openFormBuilder(formId) {
+    formBuilderState = { id: formId, slug: null, sections: [] };
+    fbTitle.value = '';
+    fbDescription.value = '';
+    fbActive.checked = true;
+    fbLinkWrap.innerHTML = '<span class="muted">Save form to generate link</span>';
+    formBuilderStatus.textContent = '';
+
+    if (formId) {
+      // Load existing form
+      request('/api/admin/forms/' + formId, { headers: authHeaders() })
+        .then(function(data) {
+          const form = data.form;
+          formBuilderState.id = form.id;
+          formBuilderState.slug = form.slug;
+          fbTitle.value = form.title || '';
+          fbDescription.value = form.description || '';
+          fbActive.checked = !!form.is_active;
+          formBuilderState.sections = form.sections || [];
+          if (form.slug) {
+            const publicUrl = state.apiBase + '/forms/' + form.slug;
+            fbLinkWrap.innerHTML = '<a href="' + publicUrl + '" target="_blank">' + publicUrl + '</a><br>' +
+              '<button class="fb-copy-link" onclick="navigator.clipboard.writeText(\'' + publicUrl + '\');this.textContent=\'Copied!\';setTimeout(()=>{this.textContent=\'Copy Link\'},1500)">Copy Link</button>';
+          }
+          renderFormBuilderSections();
+        })
+        .catch(function() {
+          formBuilderStatus.textContent = 'Failed to load form.';
+        });
+    } else {
+      // New form - add one empty section
+      formBuilderState.sections = [{
+        id: generateSectionId(),
+        title: '',
+        description: '',
+        fields: []
+      }];
+      renderFormBuilderSections();
+    }
+
+    switchTab('form-builder');
+  }
+
+  function renderFormBuilderSections() {
+    if (!fbSectionsContainer) return;
+    fbSectionsContainer.innerHTML = '';
+
+    formBuilderState.sections.forEach(function(section, si) {
+      const secEl = document.createElement('div');
+      secEl.className = 'fb-section-card';
+      secEl.setAttribute('data-section-index', si);
+
+      let html = '<div class="fb-section-header">' +
+        '<input type="text" value="' + escapeHtml(section.title || '') + '" placeholder="Section title" class="fb-sec-title">' +
+        '<button type="button" class="fb-section-remove" title="Remove section">&times;</button>' +
+      '</div>' +
+      '<input type="text" value="' + escapeHtml(section.description || '') + '" placeholder="Section description (optional)" class="fb-section-desc fb-sec-desc">' +
+      '<div class="fb-fields">';
+
+      (section.fields || []).forEach(function(field, fi) {
+        html += renderFieldEditor(field, fi);
+      });
+
+      html += '</div>' +
+        '<button type="button" class="btn btn-secondary fb-add-field" style="margin-top:10px;font-size:13px">+ Add field</button>';
+
+      secEl.innerHTML = html;
+      fbSectionsContainer.appendChild(secEl);
+    });
+  }
+
+  function renderFieldEditor(field, fi) {
+    const hasOptions = ['dropdown', 'multiple_choice', 'checkbox'].includes(field.type);
+    let h = '<div class="fb-field-item" data-field-index="' + fi + '">' +
+      '<div class="fb-field-row">' +
+        '<input type="text" value="' + escapeHtml(field.label || '') + '" placeholder="Field label" class="fb-fld-label">' +
+        '<select class="fb-fld-type">' +
+          '<option value="text"' + (field.type === 'text' ? ' selected' : '') + '>Text</option>' +
+          '<option value="paragraph"' + (field.type === 'paragraph' ? ' selected' : '') + '>Paragraph</option>' +
+          '<option value="email"' + (field.type === 'email' ? ' selected' : '') + '>Email</option>' +
+          '<option value="number"' + (field.type === 'number' ? ' selected' : '') + '>Number</option>' +
+          '<option value="date"' + (field.type === 'date' ? ' selected' : '') + '>Date</option>' +
+          '<option value="phone"' + (field.type === 'phone' ? ' selected' : '') + '>Phone</option>' +
+          '<option value="url"' + (field.type === 'url' ? ' selected' : '') + '>URL</option>' +
+          '<option value="dropdown"' + (field.type === 'dropdown' ? ' selected' : '') + '>Dropdown</option>' +
+          '<option value="multiple_choice"' + (field.type === 'multiple_choice' ? ' selected' : '') + '>Multiple Choice</option>' +
+          '<option value="checkbox"' + (field.type === 'checkbox' ? ' selected' : '') + '>Checkbox</option>' +
+        '</select>' +
+      '</div>' +
+      '<div class="fb-field-controls">' +
+        '<label><input type="checkbox" class="fb-fld-required"' + (field.required ? ' checked' : '') + '> Required</label>' +
+        '<button type="button" class="fb-field-remove" title="Remove field">&times;</button>' +
+      '</div>';
+
+    if (hasOptions) {
+      h += '<div class="fb-options-editor">';
+      (field.options || []).forEach(function(opt, oi) {
+        h += '<div class="fb-opt-row" data-opt-index="' + oi + '">' +
+          '<input type="text" value="' + escapeHtml(opt) + '" placeholder="Option ' + (oi + 1) + '" class="fb-opt-value">' +
+          '<button type="button" class="fb-opt-remove">&times;</button>' +
+        '</div>';
+      });
+      h += '<button type="button" class="fb-add-opt">+ Add option</button></div>';
+    }
+
+    h += '</div>';
+    return h;
+  }
+
+  function collectFormData() {
+    const sections = [];
+    document.querySelectorAll('#fbSections .fb-section-card').forEach(function(secEl) {
+      const section = {
+        id: formBuilderState.sections[parseInt(secEl.getAttribute('data-section-index'))]?.id || generateSectionId(),
+        title: secEl.querySelector('.fb-sec-title').value.trim(),
+        description: secEl.querySelector('.fb-sec-desc').value.trim(),
+        fields: []
+      };
+
+      secEl.querySelectorAll('.fb-field-item').forEach(function(fldEl, fi) {
+        const si = parseInt(secEl.getAttribute('data-section-index'));
+        const existingField = (formBuilderState.sections[si]?.fields || [])[fi];
+        const type = fldEl.querySelector('.fb-fld-type').value;
+        const field = {
+          id: existingField?.id || generateFieldId(),
+          label: fldEl.querySelector('.fb-fld-label').value.trim() || ('Question ' + (fi + 1)),
+          type: type,
+          required: fldEl.querySelector('.fb-fld-required').checked,
+          placeholder: '',
+          options: []
+        };
+
+        if (['dropdown', 'multiple_choice', 'checkbox'].includes(type)) {
+          fldEl.querySelectorAll('.fb-opt-value').forEach(function(optInput) {
+            const v = optInput.value.trim();
+            if (v) field.options.push(v);
+          });
+        }
+
+        section.fields.push(field);
+      });
+
+      sections.push(section);
+    });
+    return sections;
+  }
+
+  // Event delegation for form builder
+  if (fbSectionsContainer) fbSectionsContainer.addEventListener('click', function(e) {
+    const target = e.target;
+
+    // Remove section
+    if (target.closest('.fb-section-remove')) {
+      const secCard = target.closest('.fb-section-card');
+      const si = parseInt(secCard.getAttribute('data-section-index'));
+      formBuilderState.sections = collectFormData();
+      formBuilderState.sections.splice(si, 1);
+      renderFormBuilderSections();
+      return;
+    }
+
+    // Remove field
+    if (target.closest('.fb-field-remove')) {
+      const secCard = target.closest('.fb-section-card');
+      const fldItem = target.closest('.fb-field-item');
+      const si = parseInt(secCard.getAttribute('data-section-index'));
+      const fi = parseInt(fldItem.getAttribute('data-field-index'));
+      formBuilderState.sections = collectFormData();
+      formBuilderState.sections[si].fields.splice(fi, 1);
+      renderFormBuilderSections();
+      return;
+    }
+
+    // Add field (in-section button)
+    if (target.closest('.fb-add-field')) {
+      const secCard = target.closest('.fb-section-card');
+      const si = parseInt(secCard.getAttribute('data-section-index'));
+      formBuilderState.sections = collectFormData();
+      formBuilderState.sections[si].fields.push({
+        id: generateFieldId(),
+        label: '',
+        type: 'text',
+        required: false,
+        placeholder: '',
+        options: []
+      });
+      renderFormBuilderSections();
+      return;
+    }
+
+    // Remove option
+    if (target.closest('.fb-opt-remove')) {
+      const secCard = target.closest('.fb-section-card');
+      const fldItem = target.closest('.fb-field-item');
+      const optRow = target.closest('.fb-opt-row');
+      const si = parseInt(secCard.getAttribute('data-section-index'));
+      const fi = parseInt(fldItem.getAttribute('data-field-index'));
+      const oi = parseInt(optRow.getAttribute('data-opt-index'));
+      formBuilderState.sections = collectFormData();
+      formBuilderState.sections[si].fields[fi].options.splice(oi, 1);
+      renderFormBuilderSections();
+      return;
+    }
+
+    // Add option
+    if (target.closest('.fb-add-opt')) {
+      const secCard = target.closest('.fb-section-card');
+      const fldItem = target.closest('.fb-field-item');
+      const si = parseInt(secCard.getAttribute('data-section-index'));
+      const fi = parseInt(fldItem.getAttribute('data-field-index'));
+      formBuilderState.sections = collectFormData();
+      formBuilderState.sections[si].fields[fi].options.push('');
+      renderFormBuilderSections();
+      return;
+    }
+  });
+
+  // Change field type re-render (for showing/hiding options)
+  if (fbSectionsContainer) fbSectionsContainer.addEventListener('change', function(e) {
+    if (e.target.classList.contains('fb-fld-type')) {
+      formBuilderState.sections = collectFormData();
+      renderFormBuilderSections();
+    }
+  });
+
+  // Add section
+  if (fbAddSectionBtn) fbAddSectionBtn.addEventListener('click', function() {
+    formBuilderState.sections = collectFormData();
+    formBuilderState.sections.push({
+      id: generateSectionId(),
+      title: '',
+      description: '',
+      fields: []
+    });
+    renderFormBuilderSections();
+  });
+
+  // Sidebar "Add Field" buttons
+  document.querySelectorAll('.fb-field-btn').forEach(function(btn) {
+    btn.addEventListener('click', function() {
+      const type = btn.getAttribute('data-type');
+      formBuilderState.sections = collectFormData();
+      if (!formBuilderState.sections.length) {
+        formBuilderState.sections.push({ id: generateSectionId(), title: '', description: '', fields: [] });
+      }
+      const lastSection = formBuilderState.sections[formBuilderState.sections.length - 1];
+      lastSection.fields.push({
+        id: generateFieldId(),
+        label: '',
+        type: type,
+        required: false,
+        placeholder: '',
+        options: type === 'dropdown' || type === 'multiple_choice' || type === 'checkbox' ? ['Option 1'] : []
+      });
+      renderFormBuilderSections();
+    });
+  });
+
+  // Save form
+  if (saveFormBtn) saveFormBtn.addEventListener('click', async function() {
+    const title = fbTitle.value.trim();
+    if (!title) {
+      formBuilderStatus.textContent = 'Title is required.';
+      return;
+    }
+
+    formBuilderState.sections = collectFormData();
+    saveFormBtn.disabled = true;
+    saveFormBtn.textContent = 'Saving...';
+    formBuilderStatus.textContent = '';
+
+    try {
+      if (formBuilderState.id) {
+        // Update
+        await request('/api/admin/forms/' + formBuilderState.id, {
+          method: 'PUT',
+          headers: authHeaders(),
+          body: JSON.stringify({
+            title: title,
+            description: fbDescription.value.trim(),
+            sections: formBuilderState.sections,
+            is_active: fbActive.checked
+          })
+        });
+        formBuilderStatus.textContent = 'Form saved.';
+      } else {
+        // Create
+        const data = await request('/api/admin/forms', {
+          method: 'POST',
+          headers: authHeaders(),
+          body: JSON.stringify({
+            title: title,
+            description: fbDescription.value.trim(),
+            sections: formBuilderState.sections
+          })
+        });
+        formBuilderState.id = data.form.id;
+        formBuilderState.slug = data.form.slug;
+        formBuilderStatus.textContent = 'Form created.';
+      }
+
+      // Update link
+      if (formBuilderState.slug) {
+        const publicUrl = state.apiBase + '/forms/' + formBuilderState.slug;
+        fbLinkWrap.innerHTML = '<a href="' + publicUrl + '" target="_blank">' + publicUrl + '</a><br>' +
+          '<button class="fb-copy-link" onclick="navigator.clipboard.writeText(\'' + publicUrl + '\');this.textContent=\'Copied!\';setTimeout(()=>{this.textContent=\'Copy Link\'},1500)">Copy Link</button>';
+      }
+    } catch (err) {
+      formBuilderStatus.textContent = err.message || 'Save failed.';
+    } finally {
+      saveFormBtn.disabled = false;
+      saveFormBtn.textContent = 'Save Form';
+    }
+  });
+
+  // Delete form
+  async function deleteForm(id) {
+    openConfirmModal('Delete this form and all its responses?', async function() {
+      try {
+        await request('/api/admin/forms/' + id, {
+          method: 'DELETE',
+          headers: authHeaders()
+        });
+        loadFormsOnly();
+      } catch (err) {
+        alert(err.message || 'Delete failed.');
+      }
+    });
+  }
+
+  // Responses viewer
+  async function openFormResponses(formId) {
+    currentResponseFormId = formId;
+    switchTab('form-responses');
+    responsesFormTitle.textContent = 'Loading...';
+    responsesHead.querySelector('tr').innerHTML = '';
+    responsesBody.innerHTML = '';
+    responseCount.textContent = '';
+
+    try {
+      const [formData, respData] = await Promise.all([
+        request('/api/admin/forms/' + formId, { headers: authHeaders() }),
+        request('/api/admin/forms/' + formId + '/responses', { headers: authHeaders() })
+      ]);
+
+      const form = formData.form;
+      const responses = respData.data || [];
+      responsesFormTitle.textContent = form.title;
+      responseCount.textContent = responses.length + ' response' + (responses.length !== 1 ? 's' : '');
+
+      // Build headers from sections
+      const fieldsList = [];
+      let fieldCounter = 0;
+      (form.sections || []).forEach(function(s) {
+        (s.fields || []).forEach(function(f) {
+          fieldCounter++;
+          var displayLabel = (f.label && f.label.trim() && !/^f_[a-z0-9]+$/i.test(f.label.trim())) ? f.label.trim() : ('Question ' + fieldCounter);
+          fieldsList.push({ id: f.id, label: displayLabel });
+        });
+      });
+
+      let headHtml = '<th>#</th><th>Submitted</th><th>Email</th>';
+      fieldsList.forEach(function(f) {
+        headHtml += '<th>' + escapeHtml(f.label) + '</th>';
+      });
+      headHtml += '<th>Actions</th>';
+      responsesHead.querySelector('tr').innerHTML = headHtml;
+
+      responsesBody.innerHTML = responses.map(function(r, i) {
+        const data = r.data || {};
+        let row = '<td>' + (i + 1) + '</td>';
+        row += '<td>' + escapeHtml(r.submitted_at ? new Date(r.submitted_at).toLocaleString() : '') + '</td>';
+        row += '<td>' + escapeHtml(r.respondent_email || '') + '</td>';
+        fieldsList.forEach(function(f) {
+          const val = data[f.id];
+          row += '<td>' + escapeHtml(Array.isArray(val) ? val.join(', ') : (val || '')) + '</td>';
+        });
+        row += '<td><button class="row-icon-btn danger" data-action="delete-response" data-rid="' + r.id + '" title="Delete response">' +
+          '<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 01-2 2H8a2 2 0 01-2-2L5 6"/><path d="M10 11v6"/><path d="M14 11v6"/><path d="M9 6V4a1 1 0 011-1h4a1 1 0 011 1v2"/></svg>' +
+        '</button></td>';
+        return '<tr>' + row + '</tr>';
+      }).join('');
+    } catch (err) {
+      responsesFormTitle.textContent = 'Error loading responses';
+    }
+  }
+
+  // Delete response
+  if (responsesBody) responsesBody.addEventListener('click', function(e) {
+    const btn = e.target.closest('[data-action="delete-response"]');
+    if (!btn) return;
+    const rid = parseInt(btn.getAttribute('data-rid'));
+    openConfirmModal('Delete this response?', async function() {
+      try {
+        await request('/api/admin/forms/' + currentResponseFormId + '/responses/' + rid, {
+          method: 'DELETE',
+          headers: authHeaders()
+        });
+        openFormResponses(currentResponseFormId);
+      } catch (err) {
+        alert(err.message || 'Delete failed.');
+      }
+    });
+  });
+
+  // Export CSV
+  if (exportResponsesBtn) exportResponsesBtn.addEventListener('click', function() {
+    if (!currentResponseFormId) return;
+    const url = state.apiBase + '/api/admin/forms/' + currentResponseFormId + '/responses/export';
+    const a = document.createElement('a');
+    a.href = url;
+    // Fetch with auth
+    fetch(url, { headers: authHeaders() })
+      .then(function(r) { return r.blob(); })
+      .then(function(blob) {
+        const link = document.createElement('a');
+        link.href = URL.createObjectURL(blob);
+        link.download = 'responses.csv';
+        link.click();
+        URL.revokeObjectURL(link.href);
+      });
+  });
+
+  // Confirm modal helper for forms (reusing existing confirm modal)
+  function openConfirmModal(message, onConfirm) {
+    const modal = document.getElementById('confirmModal');
+    const msg = document.getElementById('confirmModalMessage');
+    const okBtn = document.getElementById('confirmOkBtn');
+    const cancelBtn = document.getElementById('confirmCancelBtn');
+    const closeBtn = document.getElementById('confirmModalClose');
+
+    msg.textContent = message;
+    modal.classList.remove('hidden');
+    modal.setAttribute('aria-hidden', 'false');
+
+    function cleanup() {
+      modal.classList.add('hidden');
+      modal.setAttribute('aria-hidden', 'true');
+      okBtn.removeEventListener('click', handleOk);
+      cancelBtn.removeEventListener('click', cleanup);
+      closeBtn.removeEventListener('click', cleanup);
+    }
+
+    function handleOk() {
+      cleanup();
+      onConfirm();
+    }
+
+    okBtn.addEventListener('click', handleOk);
+    cancelBtn.addEventListener('click', cleanup);
+    closeBtn.addEventListener('click', cleanup);
+  }
+
 })();
