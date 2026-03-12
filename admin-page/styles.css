@@ -28,6 +28,10 @@
 
 * { box-sizing: border-box; }
 
+/* Logo adapts to light/dark theme - same as landing page */
+.admin-logo { filter: invert(1); }
+[data-theme="dark"] .admin-logo { filter: invert(0); }
+
 html, body {
   margin: 0;
   padding: 0;

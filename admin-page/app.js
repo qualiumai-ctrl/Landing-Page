@@ -350,7 +350,7 @@
     const templateValue = document.querySelector('input[name="template"]:checked')?.value || 'blank';
     const def = templates[templateValue] || templates.blank;
     emailSubject.value = def.subject;
-    const content = middleContent.value.trim() || 'Your message here';
+    const content = (middleContent.value.trim() || 'Your message here').replace(/\n/g, '<br>');
     emailBody.value = def.body.replace('{{CONTENT}}', content);
     updatePreview();
   }
@@ -740,7 +740,7 @@
     middleContent.addEventListener('input', function () {
       const templateValue = document.querySelector('input[name="template"]:checked')?.value || 'blank';
       const def = templates[templateValue] || templates.blank;
-      emailBody.value = def.body.replace('{{CONTENT}}', this.value || 'Your message here.');
+      emailBody.value = def.body.replace('{{CONTENT}}', (this.value || 'Your message here.').replace(/\n/g, '<br>'));
       updatePreview();
       
       // Update body hint
