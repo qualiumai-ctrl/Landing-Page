@@ -3,6 +3,7 @@
   "cleanUrls": true,
   "rewrites": [
     { "source": "/api/(.*)", "destination": "/api" },
+    { "source": "/forms/:slug", "destination": "/api" },
     { "source": "/careers", "destination": "/careers.html" },
     { "source": "/careers/apply", "destination": "/careers-apply.html" }
   ]

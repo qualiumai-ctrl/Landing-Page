@@ -31,7 +31,7 @@ const ADMIN_TOKEN_SECRET = process.env.ADMIN_TOKEN_SECRET || '';
 app.set('trust proxy', 1);
 
 // --- Middleware ---
-app.use(express.json({ limit: '10kb' }));
+app.use(express.json({ limit: '1mb' }));
 app.use(express.static(path.join(__dirname), {
     index: 'index.html',
     extensions: ['html']
@@ -238,6 +238,29 @@ async function ensurePostgresSchema() {
             await pgQuery(`ALTER TABLE career_applications ADD COLUMN IF NOT EXISTS degree TEXT DEFAULT ''`);
             await pgQuery(`ALTER TABLE career_applications ADD COLUMN IF NOT EXISTS graduation_year INTEGER DEFAULT 0`);
             await pgQuery(`ALTER TABLE career_applications ADD COLUMN IF NOT EXISTS availability TEXT DEFAULT ''`);
+
+            await pgQuery(`
+                CREATE TABLE IF NOT EXISTS forms (
+                    id SERIAL PRIMARY KEY,
+                    title TEXT NOT NULL,
+                    description TEXT DEFAULT '',
+                    slug TEXT NOT NULL UNIQUE,
+                    schema_json TEXT NOT NULL DEFAULT '[]',
+                    is_active INTEGER DEFAULT 1,
+                    created_at TIMESTAMPTZ DEFAULT NOW(),
+                    updated_at TIMESTAMPTZ DEFAULT NOW()
+                )
+            `);
+
+            await pgQuery(`
+                CREATE TABLE IF NOT EXISTS form_responses (
+                    id SERIAL PRIMARY KEY,
+                    form_id INTEGER NOT NULL REFERENCES forms(id) ON DELETE CASCADE,
+                    response_json TEXT NOT NULL DEFAULT '{}',
+                    respondent_email TEXT DEFAULT '',
+                    submitted_at TIMESTAMPTZ DEFAULT NOW()
+                )
+            `);
         })();
     }
     await postgresSchemaReady;
@@ -298,6 +321,27 @@ if (HAS_POSTGRES) {
         try { db.prepare('ALTER TABLE career_applications ADD COLUMN degree TEXT DEFAULT ""').run(); } catch (e) {}
         try { db.prepare('ALTER TABLE career_applications ADD COLUMN graduation_year INTEGER DEFAULT 0').run(); } catch (e) {}
         try { db.prepare('ALTER TABLE career_applications ADD COLUMN availability TEXT DEFAULT ""').run(); } catch (e) {}
+
+        db.exec(`
+            CREATE TABLE IF NOT EXISTS forms (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                title TEXT NOT NULL,
+                description TEXT DEFAULT '',
+                slug TEXT NOT NULL UNIQUE,
+                schema_json TEXT NOT NULL DEFAULT '[]',
+                is_active INTEGER DEFAULT 1,
+                created_at TEXT DEFAULT (datetime('now')),
+                updated_at TEXT DEFAULT (datetime('now'))
+            );
+
+            CREATE TABLE IF NOT EXISTS form_responses (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                form_id INTEGER NOT NULL REFERENCES forms(id) ON DELETE CASCADE,
+                response_json TEXT NOT NULL DEFAULT '{}',
+                respondent_email TEXT DEFAULT '',
+                submitted_at TEXT DEFAULT (datetime('now'))
+            );
+        `);
     } catch (e) {
         console.warn('SQLite unavailable:', e.message);
         db = null;
@@ -1461,6 +1505,345 @@ app.delete('/api/admin/careers/:id', requireAdminAuth, async (req, res) => {
     }
 });
 
+// =============  FORMS  ================
+
+function generateSlug(title) {
+    return title.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '').substring(0, 60) + '-' + Date.now().toString(36);
+}
+
+// --- Admin: Create Form ---
+app.post('/api/admin/forms', requireAdminAuth, async (req, res) => {
+    try {
+        const { title, description, sections } = req.body || {};
+        if (!title || !title.trim()) {
+            return res.status(400).json({ success: false, message: 'Form title is required.' });
+        }
+        const slug = generateSlug(title.trim());
+        const schemaJson = JSON.stringify(Array.isArray(sections) ? sections : []);
+
+        if (HAS_POSTGRES) {
+            await ensurePostgresSchema();
+            const result = await pgQuery(
+                `INSERT INTO forms (title, description, slug, schema_json) VALUES ($1, $2, $3, $4) RETURNING id`,
+                [title.trim(), (description || '').trim(), slug, schemaJson]
+            );
+            return res.json({ success: true, form: { id: result.rows[0].id, slug } });
+        } else if (db) {
+            const result = db.prepare(
+                `INSERT INTO forms (title, description, slug, schema_json) VALUES (?, ?, ?, ?)`
+            ).run(title.trim(), (description || '').trim(), slug, schemaJson);
+            return res.json({ success: true, form: { id: result.lastInsertRowid, slug } });
+        }
+        return res.status(500).json({ success: false, message: 'No database configured.' });
+    } catch (err) {
+        console.error('Create form error:', err.message);
+        return res.status(500).json({ success: false, message: 'Internal server error.' });
+    }
+});
+
+// --- Admin: List Forms ---
+app.get('/api/admin/forms', requireAdminAuth, async (req, res) => {
+    try {
+        let rows = [];
+        if (HAS_POSTGRES) {
+            await ensurePostgresSchema();
+            const result = await pgQuery('SELECT id, title, description, slug, is_active, created_at, updated_at FROM forms ORDER BY created_at DESC');
+            rows = result.rows;
+        } else if (db) {
+            rows = db.prepare('SELECT id, title, description, slug, is_active, created_at, updated_at FROM forms ORDER BY created_at DESC').all();
+        }
+        // attach response counts
+        for (const f of rows) {
+            if (HAS_POSTGRES) {
+                const cr = await pgQuery('SELECT COUNT(*)::int AS count FROM form_responses WHERE form_id = $1', [f.id]);
+                f.response_count = cr.rows[0].count;
+            } else if (db) {
+                f.response_count = db.prepare('SELECT COUNT(*) AS count FROM form_responses WHERE form_id = ?').get(f.id).count;
+            }
+        }
+        return res.json({ success: true, data: rows });
+    } catch (err) {
+        console.error('List forms error:', err.message);
+        return res.status(500).json({ success: false, message: 'Internal server error.' });
+    }
+});
+
+// --- Admin: Get Single Form ---
+app.get('/api/admin/forms/:id', requireAdminAuth, async (req, res) => {
+    try {
+        const id = parseAdminId(req, res);
+        if (!id) return;
+        let row = null;
+        if (HAS_POSTGRES) {
+            await ensurePostgresSchema();
+            const result = await pgQuery('SELECT * FROM forms WHERE id = $1', [id]);
+            row = result.rows[0] || null;
+        } else if (db) {
+            row = db.prepare('SELECT * FROM forms WHERE id = ?').get(id) || null;
+        }
+        if (!row) return res.status(404).json({ success: false, message: 'Form not found.' });
+        row.sections = JSON.parse(row.schema_json || '[]');
+        return res.json({ success: true, form: row });
+    } catch (err) {
+        console.error('Get form error:', err.message);
+        return res.status(500).json({ success: false, message: 'Internal server error.' });
+    }
+});
+
+// --- Admin: Update Form ---
+app.put('/api/admin/forms/:id', requireAdminAuth, async (req, res) => {
+    try {
+        const id = parseAdminId(req, res);
+        if (!id) return;
+        const { title, description, sections, is_active } = req.body || {};
+        if (!title || !title.trim()) {
+            return res.status(400).json({ success: false, message: 'Form title is required.' });
+        }
+        const schemaJson = JSON.stringify(Array.isArray(sections) ? sections : []);
+        const active = is_active === undefined ? 1 : (is_active ? 1 : 0);
+
+        let updated = false;
+        if (HAS_POSTGRES) {
+            await ensurePostgresSchema();
+            const result = await pgQuery(
+                `UPDATE forms SET title = $1, description = $2, schema_json = $3, is_active = $4, updated_at = NOW() WHERE id = $5`,
+                [title.trim(), (description || '').trim(), schemaJson, active, id]
+            );
+            updated = (result.rowCount || 0) > 0;
+        } else if (db) {
+            const result = db.prepare(
+                `UPDATE forms SET title = ?, description = ?, schema_json = ?, is_active = ?, updated_at = datetime('now') WHERE id = ?`
+            ).run(title.trim(), (description || '').trim(), schemaJson, active, id);
+            updated = (result.changes || 0) > 0;
+        }
+        if (!updated) return res.status(404).json({ success: false, message: 'Form not found.' });
+        return res.json({ success: true, message: 'Form updated.' });
+    } catch (err) {
+        console.error('Update form error:', err.message);
+        return res.status(500).json({ success: false, message: 'Internal server error.' });
+    }
+});
+
+// --- Admin: Delete Form ---
+app.delete('/api/admin/forms/:id', requireAdminAuth, async (req, res) => {
+    try {
+        const id = parseAdminId(req, res);
+        if (!id) return;
+        let deleted = false;
+        if (HAS_POSTGRES) {
+            await ensurePostgresSchema();
+            await pgQuery('DELETE FROM form_responses WHERE form_id = $1', [id]);
+            const result = await pgQuery('DELETE FROM forms WHERE id = $1', [id]);
+            deleted = (result.rowCount || 0) > 0;
+        } else if (db) {
+            db.prepare('DELETE FROM form_responses WHERE form_id = ?').run(id);
+            const result = db.prepare('DELETE FROM forms WHERE id = ?').run(id);
+            deleted = (result.changes || 0) > 0;
+        }
+        if (!deleted) return res.status(404).json({ success: false, message: 'Form not found.' });
+        return res.json({ success: true, message: 'Form deleted.' });
+    } catch (err) {
+        console.error('Delete form error:', err.message);
+        return res.status(500).json({ success: false, message: 'Internal server error.' });
+    }
+});
+
+// --- Admin: Get Form Responses ---
+app.get('/api/admin/forms/:id/responses', requireAdminAuth, async (req, res) => {
+    try {
+        const id = parseAdminId(req, res);
+        if (!id) return;
+        let rows = [];
+        if (HAS_POSTGRES) {
+            await ensurePostgresSchema();
+            const result = await pgQuery('SELECT * FROM form_responses WHERE form_id = $1 ORDER BY submitted_at DESC', [id]);
+            rows = result.rows;
+        } else if (db) {
+            rows = db.prepare('SELECT * FROM form_responses WHERE form_id = ? ORDER BY submitted_at DESC').all(id);
+        }
+        rows.forEach(r => { r.data = JSON.parse(r.response_json || '{}'); });
+        return res.json({ success: true, data: rows });
+    } catch (err) {
+        console.error('Get form responses error:', err.message);
+        return res.status(500).json({ success: false, message: 'Internal server error.' });
+    }
+});
+
+// --- Admin: Export Form Responses as CSV ---
+app.get('/api/admin/forms/:id/responses/export', requireAdminAuth, async (req, res) => {
+    try {
+        const id = parseAdminId(req, res);
+        if (!id) return;
+
+        // get form schema for column headers
+        let form = null;
+        if (HAS_POSTGRES) {
+            await ensurePostgresSchema();
+            const fr = await pgQuery('SELECT * FROM forms WHERE id = $1', [id]);
+            form = fr.rows[0] || null;
+        } else if (db) {
+            form = db.prepare('SELECT * FROM forms WHERE id = ?').get(id) || null;
+        }
+        if (!form) return res.status(404).json({ success: false, message: 'Form not found.' });
+
+        const sections = JSON.parse(form.schema_json || '[]');
+        const fieldsList = [];
+        for (const s of sections) {
+            for (const f of (s.fields || [])) {
+                fieldsList.push({ id: f.id, label: f.label || f.id });
+            }
+        }
+
+        let rows = [];
+        if (HAS_POSTGRES) {
+            const rr = await pgQuery('SELECT * FROM form_responses WHERE form_id = $1 ORDER BY submitted_at ASC', [id]);
+            rows = rr.rows;
+        } else if (db) {
+            rows = db.prepare('SELECT * FROM form_responses WHERE form_id = ? ORDER BY submitted_at ASC').all(id);
+        }
+
+        // build CSV
+        const csvEscape = (v) => {
+            const s = String(v == null ? '' : v);
+            if (s.includes(',') || s.includes('"') || s.includes('\n')) return '"' + s.replace(/"/g, '""') + '"';
+            return s;
+        };
+        const headers = ['#', 'Submitted At', 'Email', ...fieldsList.map(f => f.label)];
+        const csvLines = [headers.map(csvEscape).join(',')];
+        rows.forEach((r, i) => {
+            const data = JSON.parse(r.response_json || '{}');
+            const line = [
+                i + 1,
+                r.submitted_at || '',
+                r.respondent_email || '',
+                ...fieldsList.map(f => {
+                    const v = data[f.id];
+                    return Array.isArray(v) ? v.join('; ') : (v || '');
+                })
+            ];
+            csvLines.push(line.map(csvEscape).join(','));
+        });
+
+        const csvContent = '\uFEFF' + csvLines.join('\r\n');
+        res.setHeader('Content-Type', 'text/csv; charset=utf-8');
+        res.setHeader('Content-Disposition', `attachment; filename="${form.title.replace(/[^a-zA-Z0-9]/g, '_')}_responses.csv"`);
+        return res.send(csvContent);
+    } catch (err) {
+        console.error('Export form responses error:', err.message);
+        return res.status(500).json({ success: false, message: 'Internal server error.' });
+    }
+});
+
+// --- Admin: Delete single response ---
+app.delete('/api/admin/forms/:id/responses/:rid', requireAdminAuth, async (req, res) => {
+    try {
+        const formId = parseAdminId(req, res);
+        if (!formId) return;
+        const rid = parseInt(req.params.rid, 10);
+        if (!Number.isInteger(rid) || rid <= 0) {
+            return res.status(400).json({ success: false, message: 'Invalid response id.' });
+        }
+        let deleted = false;
+        if (HAS_POSTGRES) {
+            await ensurePostgresSchema();
+            const result = await pgQuery('DELETE FROM form_responses WHERE id = $1 AND form_id = $2', [rid, formId]);
+            deleted = (result.rowCount || 0) > 0;
+        } else if (db) {
+            const result = db.prepare('DELETE FROM form_responses WHERE id = ? AND form_id = ?').run(rid, formId);
+            deleted = (result.changes || 0) > 0;
+        }
+        if (!deleted) return res.status(404).json({ success: false, message: 'Response not found.' });
+        return res.json({ success: true, message: 'Response deleted.' });
+    } catch (err) {
+        console.error('Delete form response error:', err.message);
+        return res.status(500).json({ success: false, message: 'Internal server error.' });
+    }
+});
+
+// --- Public: Get form by slug (no auth) ---
+app.get('/api/forms/:slug', async (req, res) => {
+    try {
+        const slug = String(req.params.slug || '').trim();
+        if (!slug) return res.status(400).json({ success: false, message: 'Slug is required.' });
+
+        let row = null;
+        if (HAS_POSTGRES) {
+            await ensurePostgresSchema();
+            const result = await pgQuery('SELECT id, title, description, slug, schema_json, is_active FROM forms WHERE slug = $1', [slug]);
+            row = result.rows[0] || null;
+        } else if (db) {
+            row = db.prepare('SELECT id, title, description, slug, schema_json, is_active FROM forms WHERE slug = ?').get(slug) || null;
+        }
+        if (!row) return res.status(404).json({ success: false, message: 'Form not found.' });
+        if (!row.is_active) return res.status(403).json({ success: false, message: 'This form is no longer accepting responses.' });
+        row.sections = JSON.parse(row.schema_json || '[]');
+        delete row.schema_json;
+        return res.json({ success: true, form: row });
+    } catch (err) {
+        console.error('Public form fetch error:', err.message);
+        return res.status(500).json({ success: false, message: 'Internal server error.' });
+    }
+});
+
+// --- Public: Submit form response (no auth) ---
+app.post('/api/forms/:slug/submit', async (req, res) => {
+    try {
+        const slug = String(req.params.slug || '').trim();
+        if (!slug) return res.status(400).json({ success: false, message: 'Slug is required.' });
+
+        let form = null;
+        if (HAS_POSTGRES) {
+            await ensurePostgresSchema();
+            const result = await pgQuery('SELECT id, schema_json, is_active FROM forms WHERE slug = $1', [slug]);
+            form = result.rows[0] || null;
+        } else if (db) {
+            form = db.prepare('SELECT id, schema_json, is_active FROM forms WHERE slug = ?').get(slug) || null;
+        }
+        if (!form) return res.status(404).json({ success: false, message: 'Form not found.' });
+        if (!form.is_active) return res.status(403).json({ success: false, message: 'This form is no longer accepting responses.' });
+
+        const sections = JSON.parse(form.schema_json || '[]');
+        const { responses, email } = req.body || {};
+        const data = responses || {};
+
+        // validate required fields
+        for (const section of sections) {
+            for (const field of (section.fields || [])) {
+                if (field.required) {
+                    const val = data[field.id];
+                    if (val === undefined || val === null || val === '' || (Array.isArray(val) && val.length === 0)) {
+                        return res.status(400).json({ success: false, message: `"${field.label}" is required.` });
+                    }
+                }
+            }
+        }
+
+        const responseJson = JSON.stringify(data);
+        const respondentEmail = String(email || '').trim().toLowerCase();
+
+        if (HAS_POSTGRES) {
+            await pgQuery(
+                `INSERT INTO form_responses (form_id, response_json, respondent_email) VALUES ($1, $2, $3)`,
+                [form.id, responseJson, respondentEmail]
+            );
+        } else if (db) {
+            db.prepare(
+                `INSERT INTO form_responses (form_id, response_json, respondent_email) VALUES (?, ?, ?)`
+            ).run(form.id, responseJson, respondentEmail);
+        }
+
+        return res.json({ success: true, message: 'Response submitted successfully.' });
+    } catch (err) {
+        console.error('Form submit error:', err.message);
+        return res.status(500).json({ success: false, message: 'Internal server error.' });
+    }
+});
+
+// --- Serve public form page ---
+app.get('/forms/:slug', (req, res) => {
+    res.sendFile(path.join(__dirname, 'forms.html'));
+});
+
 app.post('/api/admin/email/send', requireAdminAuth, async (req, res) => {
     try {
         const { audience, subject, body, customEmails } = req.body || {};
@@ -1660,6 +2043,10 @@ if (!process.env.VERCEL) {
         console.log(`    GET  /api/admin/registrations → Admin registrations`);
         console.log(`    GET  /api/admin/contacts → Admin contacts`);
         console.log(`    GET  /api/admin/careers  → Admin careers`);
+        console.log(`    *    /api/admin/forms/*  → Admin forms CRUD`);
+        console.log(`    GET  /api/forms/:slug    → Public form data`);
+        console.log(`    POST /api/forms/:slug/submit → Public form submit`);
+        console.log(`    GET  /forms/:slug        → Public form page`);
         console.log(`    POST /api/admin/email/send → Admin bulk email\n`);
     });
 }
