@@ -25,7 +25,7 @@
 <table width="600" cellpadding="0" cellspacing="0" border="0" style="max-width:600px;width:100%;">
 <tr><td style="background-color:#0A0A0A;padding:28px 40px;border-radius:12px 12px 0 0;">
 <table width="100%"><tr>
-<td><h2 style="margin:0;font-size:18px;color:#ffffff;font-weight:700;letter-spacing:-0.02em;">Qaulium AI</h2></td>
+<td><img src="cid:qualium-logo" alt="Qaulium AI" height="36" style="display:block;height:36px;width:auto;border:0;"></td>
 <td align="right" style="font-size:12px;color:#888888;letter-spacing:0.05em;text-transform:uppercase;">Registration Confirmed</td>
 </tr></table>
 </td></tr>
@@ -54,7 +54,7 @@
 <table width="600" cellpadding="0" cellspacing="0" border="0" style="max-width:600px;width:100%;">
 <tr><td style="background-color:#0A0A0A;padding:28px 40px;border-radius:12px 12px 0 0;">
 <table width="100%"><tr>
-<td><h2 style="margin:0;font-size:18px;color:#ffffff;font-weight:700;letter-spacing:-0.02em;">Qaulium AI</h2></td>
+<td><img src="cid:qualium-logo" alt="Qaulium AI" height="36" style="display:block;height:36px;width:auto;border:0;"></td>
 <td align="right" style="font-size:12px;color:#888888;letter-spacing:0.05em;text-transform:uppercase;">Interview</td>
 </tr></table>
 </td></tr>
@@ -84,7 +84,7 @@
 <table width="600" cellpadding="0" cellspacing="0" border="0" style="max-width:600px;width:100%;">
 <tr><td style="background-color:#0A0A0A;padding:28px 40px;border-radius:12px 12px 0 0;">
 <table width="100%"><tr>
-<td><h2 style="margin:0;font-size:18px;color:#ffffff;font-weight:700;letter-spacing:-0.02em;">Qaulium AI</h2></td>
+<td><img src="cid:qualium-logo" alt="Qaulium AI" height="36" style="display:block;height:36px;width:auto;border:0;"></td>
 <td align="right" style="font-size:12px;color:#888888;letter-spacing:0.05em;text-transform:uppercase;">Application Received</td>
 </tr></table>
 </td></tr>
@@ -113,7 +113,7 @@
 <table width="600" cellpadding="0" cellspacing="0" border="0" style="max-width:600px;width:100%;">
 <tr><td style="background-color:#0A0A0A;padding:28px 40px;border-radius:12px 12px 0 0;">
 <table width="100%"><tr>
-<td><h2 style="margin:0;font-size:18px;color:#ffffff;font-weight:700;letter-spacing:-0.02em;">Qaulium AI</h2></td>
+<td><img src="cid:qualium-logo" alt="Qaulium AI" height="36" style="display:block;height:36px;width:auto;border:0;"></td>
 <td align="right" style="font-size:12px;color:#888888;letter-spacing:0.05em;text-transform:uppercase;">Response</td>
 </tr></table>
 </td></tr>
@@ -142,7 +142,7 @@
 <table width="600" cellpadding="0" cellspacing="0" border="0" style="max-width:600px;width:100%;">
 <tr><td style="background-color:#0A0A0A;padding:28px 40px;border-radius:12px 12px 0 0;">
 <table width="100%"><tr>
-<td><h2 style="margin:0;font-size:18px;color:#ffffff;font-weight:700;letter-spacing:-0.02em;">Qaulium AI</h2></td>
+<td><img src="cid:qualium-logo" alt="Qaulium AI" height="36" style="display:block;height:36px;width:auto;border:0;"></td>
 <td align="right" style="font-size:12px;color:#888888;letter-spacing:0.05em;text-transform:uppercase;">Announcement</td>
 </tr></table>
 </td></tr>
@@ -170,7 +170,7 @@
 <tr><td align="center">
 <table width="600" cellpadding="0" cellspacing="0" border="0" style="max-width:600px;width:100%;">
 <tr><td style="background-color:#0A0A0A;padding:28px 40px;border-radius:12px 12px 0 0;">
-<h2 style="margin:0;font-size:18px;color:#ffffff;font-weight:700;letter-spacing:-0.02em;">Qaulium AI</h2>
+<img src="cid:qualium-logo" alt="Qaulium AI" height="36" style="display:block;height:36px;width:auto;border:0;">
 </td></tr>
 <tr><td style="background-color:#ffffff;padding:48px 40px;">
 <p style="margin:0 0 20px;font-size:15px;color:#374151;line-height:1.7;">{{CONTENT}}</p>
@@ -325,7 +325,10 @@
 
   function updatePreview() {
     if (!emailPreviewFrame) return;
-    emailPreviewFrame.srcdoc = emailBody.value || '<p style="font-family:Arial,sans-serif;padding:20px;color:#999;">Preview will appear here.</p>';
+    // Replace cid:qualium-logo with actual URL for preview rendering
+    const previewHtml = (emailBody.value || '<p style="font-family:Arial,sans-serif;padding:20px;color:#999;">Preview will appear here.</p>')
+      .replace(/cid:qualium-logo/g, 'https://qauliumai.in/logo-white.png');
+    emailPreviewFrame.srcdoc = previewHtml;
     
     // Update preview info
     if (previewSubject) previewSubject.textContent = emailSubject.value || '—';
@@ -734,6 +737,65 @@
   });
   
   if (regenerateTemplate) regenerateTemplate.addEventListener('click', applyTemplate);
+
+  // HTML Source Code Editor
+  const toggleHtmlEditor = document.getElementById('toggleHtmlEditor');
+  const htmlEditorContainer = document.getElementById('htmlEditorContainer');
+  const htmlSourceEditor = document.getElementById('htmlSourceEditor');
+  const applyHtmlBtn = document.getElementById('applyHtmlBtn');
+  const copyHtmlBtn = document.getElementById('copyHtmlBtn');
+  const loadCurrentHtmlBtn = document.getElementById('loadCurrentHtmlBtn');
+
+  if (toggleHtmlEditor) {
+    toggleHtmlEditor.addEventListener('click', function () {
+      const isHidden = htmlEditorContainer.classList.contains('hidden');
+      htmlEditorContainer.classList.toggle('hidden');
+      toggleHtmlEditor.textContent = isHidden ? 'Hide HTML Source' : 'Edit HTML Source';
+      if (isHidden) {
+        // Load current template HTML into editor
+        htmlSourceEditor.value = emailBody.value || '';
+      }
+    });
+  }
+
+  if (applyHtmlBtn) {
+    applyHtmlBtn.addEventListener('click', function () {
+      emailBody.value = htmlSourceEditor.value;
+      updatePreview();
+      setStatus(composerStatus, 'HTML applied to preview', 'ok');
+      setTimeout(function () { composerStatus.innerHTML = ''; }, 2000);
+    });
+  }
+
+  if (copyHtmlBtn) {
+    copyHtmlBtn.addEventListener('click', function () {
+      navigator.clipboard.writeText(htmlSourceEditor.value).then(function () {
+        setStatus(composerStatus, 'HTML copied to clipboard', 'ok');
+        setTimeout(function () { composerStatus.innerHTML = ''; }, 2000);
+      });
+    });
+  }
+
+  if (loadCurrentHtmlBtn) {
+    loadCurrentHtmlBtn.addEventListener('click', function () {
+      htmlSourceEditor.value = emailBody.value || '';
+      setStatus(composerStatus, 'Current template HTML loaded into editor', 'ok');
+      setTimeout(function () { composerStatus.innerHTML = ''; }, 2000);
+    });
+  }
+
+  // Allow Tab key in HTML editor for indentation
+  if (htmlSourceEditor) {
+    htmlSourceEditor.addEventListener('keydown', function (e) {
+      if (e.key === 'Tab') {
+        e.preventDefault();
+        const start = this.selectionStart;
+        const end = this.selectionEnd;
+        this.value = this.value.substring(0, start) + '  ' + this.value.substring(end);
+        this.selectionStart = this.selectionEnd = start + 2;
+      }
+    });
+  }
 
   // Save draft functionality
   if (saveDraftBtn) {

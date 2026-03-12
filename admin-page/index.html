@@ -266,6 +266,22 @@
                   <textarea id="middleContent" rows="10" placeholder="Write the main body of your email here..." required spellcheck="true"></textarea>
                   <div class="input-hint" id="bodyHint"></div>
                 </label>
+
+                <!-- HTML Source Code Editor -->
+                <div id="htmlEditorWrap" class="html-editor-wrap">
+                  <div class="html-editor-header">
+                    <button type="button" class="btn btn-secondary btn-sm" id="toggleHtmlEditor">Edit HTML Source</button>
+                    <span class="html-editor-hint">Edit the full HTML template code directly</span>
+                  </div>
+                  <div id="htmlEditorContainer" class="hidden">
+                    <textarea id="htmlSourceEditor" rows="20" spellcheck="false" class="html-source-editor" placeholder="Paste or edit raw HTML email template here..."></textarea>
+                    <div class="html-editor-actions">
+                      <button type="button" class="btn btn-secondary btn-sm" id="applyHtmlBtn">Apply HTML to Preview</button>
+                      <button type="button" class="btn btn-secondary btn-sm" id="copyHtmlBtn">Copy HTML</button>
+                      <button type="button" class="btn btn-secondary btn-sm" id="loadCurrentHtmlBtn">Load Current Template</button>
+                    </div>
+                  </div>
+                </div>
               </div>
 
               <input type="hidden" id="emailBody" required>
