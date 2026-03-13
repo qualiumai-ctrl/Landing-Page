@@ -477,7 +477,7 @@ function buildConfirmationEmail(firstName) {
 <table width="100%" cellpadding="0" cellspacing="0" border="0">
 <tr>
 <td>
-<img src="cid:qualium-logo" alt="Qaulium AI" height="36" style="display:block;height:36px;width:auto;border:0;">
+<img src="https://qauliumai.in/logo-white.png" alt="Qaulium AI" height="36" style="display:block;height:36px;width:auto;border:0;">
 </td>
 <td align="right" style="font-family:'Helvetica Neue',Helvetica,Arial,sans-serif;font-size:12px;color:#888888;letter-spacing:0.05em;text-transform:uppercase;">
 Registration Confirmation
@@ -602,7 +602,7 @@ function buildContactNotificationEmail(name, email, company, message) {
 <table width="100%" cellpadding="0" cellspacing="0" border="0">
 <tr>
 <td>
-<img src="cid:qualium-logo" alt="Qaulium AI" height="36" style="display:block;height:36px;width:auto;border:0;">
+<img src="https://qauliumai.in/logo-white.png" alt="Qaulium AI" height="36" style="display:block;height:36px;width:auto;border:0;">
 </td>
 <td align="right" style="font-family:'Helvetica Neue',Helvetica,Arial,sans-serif;font-size:12px;color:#888888;letter-spacing:0.05em;text-transform:uppercase;">
 New Contact Message
@@ -662,7 +662,7 @@ function buildContactConfirmationEmail(name) {
 <table width="100%" cellpadding="0" cellspacing="0" border="0">
 <tr>
 <td>
-<img src="cid:qualium-logo" alt="Qaulium AI" height="36" style="display:block;height:36px;width:auto;border:0;">
+<img src="https://qauliumai.in/logo-white.png" alt="Qaulium AI" height="36" style="display:block;height:36px;width:auto;border:0;">
 </td>
 <td align="right" style="font-family:'Helvetica Neue',Helvetica,Arial,sans-serif;font-size:12px;color:#888888;letter-spacing:0.05em;text-transform:uppercase;">
 Message Received
@@ -751,7 +751,7 @@ function buildCareerApplicationConfirmationEmail(firstName, roleApplied) {
 <table width="100%" cellpadding="0" cellspacing="0" border="0">
 <tr>
 <td>
-<img src="cid:qualium-logo" alt="Qaulium AI" height="36" style="display:block;height:36px;width:auto;border:0;">
+<img src="https://qauliumai.in/logo-white.png" alt="Qaulium AI" height="36" style="display:block;height:36px;width:auto;border:0;">
 </td>
 <td align="right" style="font-size:12px;color:#888888;letter-spacing:0.05em;text-transform:uppercase;">Application Received</td>
 </tr>
@@ -803,7 +803,7 @@ function buildCareerApplicationNotificationEmail(data) {
 <table width="100%" cellpadding="0" cellspacing="0" border="0">
 <tr>
 <td>
-<img src="cid:qualium-logo" alt="Qaulium AI" height="36" style="display:block;height:36px;width:auto;border:0;">
+<img src="https://qauliumai.in/logo-white.png" alt="Qaulium AI" height="36" style="display:block;height:36px;width:auto;border:0;">
 </td>
 <td align="right" style="font-family:'Helvetica Neue',Helvetica,Arial,sans-serif;font-size:12px;color:#888888;letter-spacing:0.05em;text-transform:uppercase;">
 New Application
