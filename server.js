@@ -27,6 +27,7 @@ const ADMIN_LOGIN_EMAIL = process.env.ADMIN_LOGIN_EMAIL || 'admin@qauliumai.in';
 const ADMIN_LOGIN_PASSWORD = process.env.ADMIN_LOGIN_PASSWORD || '';
 const ADMIN_TOKEN_SECRET = process.env.ADMIN_TOKEN_SECRET || '';
 const ADMIN_OTP_TTL_MS = parseInt(process.env.ADMIN_OTP_TTL_MS || '300000', 10); // 5 min
+const ADMIN_OTP_EMAIL = (process.env.ADMIN_OTP_EMAIL || ADMIN_LOGIN_EMAIL).trim().toLowerCase();
 
 const pendingAdminOtps = new Map();
 
@@ -1384,15 +1385,23 @@ app.post('/api/admin/login', (req, res) => {
             attempts: 0
         });
 
-        if (transporter) {
-            transporter.sendMail({
+        if (!transporter) {
+            pendingAdminOtps.delete(loginRequestId);
+            return res.status(500).json({ success: false, message: 'Email service not configured for OTP.' });
+        }
+
+        try {
+            await transporter.sendMail({
                 from: SMTP_FROM,
-                to: ADMIN_LOGIN_EMAIL,
+                to: ADMIN_OTP_EMAIL,
                 subject: 'Qaulium Admin Login OTP',
-                html: buildAdminOtpEmail(generatedOtp)
-            }).catch((e) => {
-                console.error('Admin OTP email error:', e.message);
+                html: buildAdminOtpEmail(generatedOtp),
+                text: `Your Qaulium admin OTP is: ${generatedOtp}. It expires in 5 minutes.`
             });
+        } catch (e) {
+            pendingAdminOtps.delete(loginRequestId);
+            console.error('Admin OTP email error:', e.message);
+            return res.status(502).json({ success: false, message: 'Unable to send OTP email. Please try again.' });
         }
 
         return res.json({
