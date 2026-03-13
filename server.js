@@ -223,7 +223,6 @@ async function ensurePostgresSchema() {
             // Backward-compatible migration: older deployments enforced unique email
             // which prevented multiple submissions from the same user.
             await pgQuery(`DROP INDEX IF EXISTS idx_registrations_email`);
-            await pgQuery(`DROP INDEX IF EXISTS registrations_email_key`);
             await pgQuery(`ALTER TABLE registrations DROP CONSTRAINT IF EXISTS registrations_email_key`);
 
             await pgQuery(`
