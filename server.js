@@ -197,11 +197,32 @@ async function pgQuery(queryText, values = []) {
     }
 }
 
+function isIgnorablePgSchemaError(err) {
+    const code = (err && err.code) || '';
+    const msg = (err && err.message) || '';
+
+    // In serverless concurrency, CREATE ... IF NOT EXISTS can still race.
+    if (code === '42P07' || code === '42710') return true;
+    if (code === '23505' && msg.includes('pg_class_relname_nsp_index')) return true;
+    return false;
+}
+
+async function pgSchemaQuery(queryText, values = []) {
+    try {
+        return await pgQuery(queryText, values);
+    } catch (err) {
+        if (isIgnorablePgSchemaError(err)) {
+            return null;
+        }
+        throw err;
+    }
+}
+
 async function ensurePostgresSchema() {
     if (!HAS_POSTGRES) return;
     if (!postgresSchemaReady) {
         postgresSchemaReady = (async () => {
-            await pgQuery(`
+            await pgSchemaQuery(`
                 CREATE TABLE IF NOT EXISTS registrations (
                     id SERIAL PRIMARY KEY,
                     first_name TEXT NOT NULL,
@@ -217,15 +238,15 @@ async function ensurePostgresSchema() {
                 )
             `);
 
-            await pgQuery(`ALTER TABLE registrations ADD COLUMN IF NOT EXISTS source TEXT DEFAULT 'unknown'`);
-            await pgQuery(`UPDATE registrations SET source = 'unknown' WHERE source IS NULL OR source = ''`);
+            await pgSchemaQuery(`ALTER TABLE registrations ADD COLUMN IF NOT EXISTS source TEXT DEFAULT 'unknown'`);
+            await pgSchemaQuery(`UPDATE registrations SET source = 'unknown' WHERE source IS NULL OR source = ''`);
 
             // Backward-compatible migration: older deployments enforced unique email
             // which prevented multiple submissions from the same user.
-            await pgQuery(`DROP INDEX IF EXISTS idx_registrations_email`);
-            await pgQuery(`ALTER TABLE registrations DROP CONSTRAINT IF EXISTS registrations_email_key`);
+            await pgSchemaQuery(`DROP INDEX IF EXISTS idx_registrations_email`);
+            await pgSchemaQuery(`ALTER TABLE registrations DROP CONSTRAINT IF EXISTS registrations_email_key`);
 
-            await pgQuery(`
+            await pgSchemaQuery(`
                 CREATE TABLE IF NOT EXISTS contact_messages (
                     id SERIAL PRIMARY KEY,
                     name TEXT NOT NULL,
@@ -236,7 +257,7 @@ async function ensurePostgresSchema() {
                 )
             `);
 
-            await pgQuery(`
+            await pgSchemaQuery(`
                 CREATE TABLE IF NOT EXISTS career_applications (
                     id SERIAL PRIMARY KEY,
                     first_name TEXT NOT NULL,
@@ -259,17 +280,17 @@ async function ensurePostgresSchema() {
                 )
             `);
 
-            await pgQuery(`ALTER TABLE career_applications ADD COLUMN IF NOT EXISTS university TEXT DEFAULT ''`);
-            await pgQuery(`ALTER TABLE career_applications ADD COLUMN IF NOT EXISTS degree TEXT DEFAULT ''`);
-            await pgQuery(`ALTER TABLE career_applications ADD COLUMN IF NOT EXISTS graduation_year INTEGER DEFAULT 0`);
-            await pgQuery(`ALTER TABLE career_applications ADD COLUMN IF NOT EXISTS availability TEXT DEFAULT ''`);
+            await pgSchemaQuery(`ALTER TABLE career_applications ADD COLUMN IF NOT EXISTS university TEXT DEFAULT ''`);
+            await pgSchemaQuery(`ALTER TABLE career_applications ADD COLUMN IF NOT EXISTS degree TEXT DEFAULT ''`);
+            await pgSchemaQuery(`ALTER TABLE career_applications ADD COLUMN IF NOT EXISTS graduation_year INTEGER DEFAULT 0`);
+            await pgSchemaQuery(`ALTER TABLE career_applications ADD COLUMN IF NOT EXISTS availability TEXT DEFAULT ''`);
 
-            await pgQuery(`DROP INDEX IF EXISTS idx_contact_messages_email`);
-            await pgQuery(`DROP INDEX IF EXISTS idx_career_applications_email`);
-            await pgQuery(`CREATE INDEX IF NOT EXISTS idx_contact_messages_email ON contact_messages(email)`);
-            await pgQuery(`CREATE INDEX IF NOT EXISTS idx_career_applications_email ON career_applications(email)`);
+            await pgSchemaQuery(`DROP INDEX IF EXISTS idx_contact_messages_email`);
+            await pgSchemaQuery(`DROP INDEX IF EXISTS idx_career_applications_email`);
+            await pgSchemaQuery(`CREATE INDEX IF NOT EXISTS idx_contact_messages_email ON contact_messages(email)`);
+            await pgSchemaQuery(`CREATE INDEX IF NOT EXISTS idx_career_applications_email ON career_applications(email)`);
 
-            await pgQuery(`
+            await pgSchemaQuery(`
                 CREATE TABLE IF NOT EXISTS forms (
                     id SERIAL PRIMARY KEY,
                     title TEXT NOT NULL,
@@ -282,7 +303,7 @@ async function ensurePostgresSchema() {
                 )
             `);
 
-            await pgQuery(`
+            await pgSchemaQuery(`
                 CREATE TABLE IF NOT EXISTS form_responses (
                     id SERIAL PRIMARY KEY,
                     form_id INTEGER NOT NULL REFERENCES forms(id) ON DELETE CASCADE,
