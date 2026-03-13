@@ -264,8 +264,10 @@ async function ensurePostgresSchema() {
             await pgQuery(`ALTER TABLE career_applications ADD COLUMN IF NOT EXISTS graduation_year INTEGER DEFAULT 0`);
             await pgQuery(`ALTER TABLE career_applications ADD COLUMN IF NOT EXISTS availability TEXT DEFAULT ''`);
 
-            await pgQuery(`CREATE UNIQUE INDEX IF NOT EXISTS idx_contact_messages_email ON contact_messages(email)`);
-            await pgQuery(`CREATE UNIQUE INDEX IF NOT EXISTS idx_career_applications_email ON career_applications(email)`);
+            await pgQuery(`DROP INDEX IF EXISTS idx_contact_messages_email`);
+            await pgQuery(`DROP INDEX IF EXISTS idx_career_applications_email`);
+            await pgQuery(`CREATE INDEX IF NOT EXISTS idx_contact_messages_email ON contact_messages(email)`);
+            await pgQuery(`CREATE INDEX IF NOT EXISTS idx_career_applications_email ON career_applications(email)`);
 
             await pgQuery(`
                 CREATE TABLE IF NOT EXISTS forms (
